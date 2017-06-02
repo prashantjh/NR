@@ -6,7 +6,6 @@ p_load(randomForest)
 p_load(ggplot2)
 p_load(caret)
 p_load(devtools)
-install.packages("drat", repos="https://cran.rstudio.com")
 drat:::addRepo("dmlc")
 p_load(xgboost)
 p_load(Amelia)
@@ -102,7 +101,7 @@ dtest <- xgb.DMatrix(data = new_ts,label=ts_label)
 
 #default parameters
 params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.0001, 
-		gamma=5, max_depth=3, min_child_weight=1, subsample=0.5, colsample_bytree=0.4)
+		gamma=4, max_depth=3, min_child_weight=1, subsample=1, colsample_bytree=1)
 
 
 ## model training
@@ -155,8 +154,8 @@ xgb.plot.importance (importance_matrix = mat)
 #########################################################################
 ## Manual parameter tuning ##
 eta = c(0.000005, 0.00001, 0.00005, 0.0001, 0.001, 0.01, 0.1)
-gamma = c(0, 2, 3, 5)
-rounds = c(15, 30, 50, 100) 
+gamma = c(0, 2, 3, 4, 5)
+rounds = c(15, 30, 50, 80, 100) 
 
 eval_result <- data.table()
 for(i in eta){
@@ -175,14 +174,64 @@ for(i in eta){
 		xgbpred <- predict (xgb1,dtest)
 		#
 		consistency <- get_logloss(validation_data, ts_label, xgbpred)
-		eval_result <- rbind(eval_result, cbind(ETA = i, Gamma = j, Nrounds = k, consistency, logloss = logLoss(ts_label, xgbpred)))
+		eval_result <- rbind(eval_result, cbind(ETA = i, Gamma = j, 
+			Nrounds = k, consistency, logloss = logLoss(ts_label, xgbpred)))
 	}
 	}
 }
 
-View(eval_result)
+eval_result2 <- eval_result[consistency >= 75, ]
+eval_result2 = eval_result2[order(logloss), ]
+View(eval_result2)
+
 
 # Best parameters: nrounds - 30, logloss - 0.692, gamma - 3
+# nrounds - 50, gamma - 4, consistency - 75, logloss - 0.6921
+
+
+
+#### Test data preediction ####
+
+params <- list(booster = "gbtree", objective = "binary:logistic", eta=0.1, 
+			gamma=3, max_depth=3, min_child_weight=1, 
+			subsample=0.5, colsample_bytree=0.4)
+## model training
+xgb1 <- xgb.train (params = params, data = dtrain, nrounds = 50, 
+			watchlist = list(val=dtest,train=dtrain), 
+			print_every_n = 10, early_stop_round = 20, 
+			maximize = F , eval_metric = "logloss")
+
+
+test <- test_data
+setDT(test)
+
+ts_label <- test$target
+new_ts <- model.matrix(~.+0,data = test[,-c("target", "era", "data_type"),with=F])
+
+ts_label <- as.numeric(ts_label)-1
+table(ts_label)
+
+dtest <- xgb.DMatrix(data = new_ts,label=ts_label)
+
+# model prediction
+xgbpred <- predict (xgb1,dtest)
+
+get_logloss(test_data, ts_label, xgbpred)
+
+
+# Output:
+test_classification <- data.frame(cbind(id = example$id, 
+				probability = xgbpred))
+write.csv(test_classification, "../results/1_xgb.csv", row.names = F)
+
+
+
+
+
+
+
+
+
 
 #### Hyper-parameter tuning ####
 xgb_grid_1 <- expand.grid(
